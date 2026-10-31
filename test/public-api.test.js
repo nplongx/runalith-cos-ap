@@ -107,3 +107,64 @@ test('envelope and batch public contracts reject unsupported wire shapes', () =>
   assert.equal(typeof validateDurableExecutionRequest, 'function');
   assert.equal(typeof validateDurableExecutionResult, 'function');
 });
+
+test('execution result validation reconciles every terminal item with its summary', () => {
+  const result = {
+    batch_id: 'batch_result',
+    status: 'completed',
+    summary: { total: 1, passed: 1, failed: 0 },
+    items: [{
+      id: 'item_result',
+      task_id: 'task_result',
+      command: 'node --version',
+      status: 'COMPLETED',
+      exit_code: 0,
+      execution_session_id: 'session_result',
+      stdout: 'v24',
+      stderr: '',
+      error: null
+    }]
+  };
+
+  assert.equal(validateExecutionResult(result), result);
+  assert.throws(() => validateExecutionResult({
+    ...result,
+    summary: { total: 1, passed: 0, failed: 1 }
+  }), /summary\.passed must equal/);
+});
+
+test('durable execution request and result validators enforce identity and success evidence', () => {
+  const request = {
+    schema_version: 1,
+    job_id: 'job_contract',
+    task_id: 'task_contract',
+    lease_id: 'lease_contract',
+    attempt: 1,
+    role: 'engineer',
+    input_commit: 'a'.repeat(40),
+    task_payload_ref: 'sha256:' + 'b'.repeat(64),
+    required_evidence: ['artifact:execution-result']
+  };
+  assert.equal(validateDurableExecutionRequest(request), request);
+  assert.throws(() => validateDurableExecutionRequest({ ...request, attempt: 0 }), /attempt must be a safe integer/);
+
+  const result = {
+    schema_version: 1,
+    job_id: 'job_contract',
+    task_id: 'task_contract',
+    lease_id: 'lease_contract',
+    attempt: 1,
+    status: 'SUCCEEDED',
+    input_commit: 'a'.repeat(40),
+    output_commit: 'c'.repeat(40),
+    exit_code: 0,
+    provider_run_id: 'provider-run-contract',
+    evidence_artifact: 'artifact:execution-result',
+    evidence_refs: ['artifact:execution-result'],
+    started_at: '2026-10-31T00:00:00Z',
+    finished_at: '2026-10-31T00:00:01Z'
+  };
+  assert.equal(validateDurableExecutionResult(result), result);
+  assert.throws(() => validateDurableExecutionResult({ ...result, evidence_refs: [] }), /SUCCEEDED requires evidence_refs/);
+  assert.throws(() => validateDurableExecutionResult({ ...result, finished_at: '2026-10-30T23:59:59Z' }), /finished_at must not precede started_at/);
+});
